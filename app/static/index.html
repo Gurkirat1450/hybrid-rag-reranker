@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hybrid RAG Re-ranker · FastAPI docs search</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --card: #fff; --text: #1d1d1f; --muted: #6b6b76; --border: #e2e2e8;
+    --accent: #0b7a75; --vec: #3b5bdb; --bm25: #c2410c; --err-bg: #fff1f0; --err: #a8071a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 20px 24px 8px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub { color: var(--muted); margin: 0; }
+  main { padding: 8px 24px 40px; }
+  form { display: flex; gap: 8px; margin: 12px 0 8px; flex-wrap: wrap; }
+  input[type=text] { flex: 1 1 420px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; }
+  select, button { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 15px; background: var(--card); }
+  button[type=submit] { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .chip { border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .msg { padding: 10px 14px; border-radius: 8px; margin: 8px 0; display: none; }
+  .msg.error { display: block; background: var(--err-bg); color: var(--err); border: 1px solid #ffccc7; }
+  .msg.info { display: block; background: #eef6ff; color: #0b4a8b; border: 1px solid #cfe3ff; }
+  .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 1000px) { .cols { grid-template-columns: 1fr; } }
+  .col { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-height: 120px; }
+  .col h2 { font-size: 16px; margin: 0 0 2px; }
+  .timing { color: var(--muted); font-size: 12px; margin-bottom: 8px; min-height: 18px; }
+  .result { border-top: 1px solid var(--border); padding: 8px 0; }
+  .result:first-of-type { border-top: none; }
+  .top { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .rank { font-weight: 700; color: var(--accent); }
+  .doc { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  .score { margin-left: auto; color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .heading { font-size: 13px; color: var(--muted); margin: 2px 0; }
+  .snippet { font-size: 13px; white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; }
+  .badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; color: #fff; }
+  .badge.v { background: var(--vec); }
+  .badge.b { background: var(--bm25); }
+  .badge.none { background: #b8b8c2; }
+  details { margin-top: 24px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  summary { cursor: pointer; font-weight: 600; }
+  table { border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--border); padding: 6px 12px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .empty { color: var(--muted); font-size: 13px; }
+  footer { color: var(--muted); font-size: 12px; padding: 0 24px 24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hybrid retrieval + re-ranking over the FastAPI tutorial</h1>
+  <p class="sub">BM25 + dense vectors (bge-small) &rarr; reciprocal rank fusion &rarr; cross-encoder re-rank. Retrieval only, no LLM.</p>
+</header>
+<main>
+  <form id="f">
+    <input id="q" type="text" maxlength="300" placeholder="Ask about the FastAPI tutorial, e.g. how do I make a query parameter required?" autocomplete="off" required>
+    <select id="k" aria-label="top k">
+      <option>3</option><option selected>5</option><option>10</option>
+    </select>
+    <button id="go" type="submit">Compare</button>
+  </form>
+  <div class="chips" id="chips"></div>
+  <div id="msg" class="msg"></div>
+
+  <div class="cols">
+    <section class="col"><h2>Vector</h2><div class="timing" id="t-vector"></div><div id="r-vector" class="empty">No query yet.</div></section>
+    <section class="col"><h2>Hybrid (RRF)</h2><div class="timing" id="t-hybrid"></div><div id="r-hybrid" class="empty">No query yet.</div></section>
+    <section class="col"><h2>Hybrid + Re-rank</h2><div class="timing" id="t-hybrid_rerank"></div><div id="r-hybrid_rerank" class="empty">No query yet.</div></section>
+  </div>
+
+  <details id="eval">
+    <summary>Eval results</summary>
+    <div id="eval-body" class="empty">Loading…</div>
+  </details>
+</main>
+<footer>Corpus: FastAPI tutorial docs by Sebastián Ramírez (MIT License).</footer>
+
+<script>
+const EXAMPLES = [
+  "How do I make a query parameter required?",
+  "Send an email after returning the response",
+  "check_same_thread SQLite",
+  "Hide the password in the response",
+  "Upload a file and read its content type",
+  "Difference between JSON Lines and Server-Sent Events",
+];
+const COLS = ["vector", "hybrid", "hybrid_rerank"];
+const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function showMsg(text, kind = "error") {
+  const m = $("msg");
+  m.className = "msg " + kind;
+  m.textContent = text;
+}
+function clearMsg() { const m = $("msg"); m.className = "msg"; m.textContent = ""; }
+
+async function readError(res) {
+  let body = {};
+  try { body = await res.json(); } catch (_) {}
+  const detail = body.detail || body.error || res.statusText;
+  if (res.status === 429) {
+    const ra = res.headers.get("Retry-After");
+    return `Slow down: rate limit reached. Try again in ${ra || "a few"} seconds. (${detail})`;
+  }
+  if (res.status === 501) return `Not implemented yet: ${detail}`;
+  if (res.status === 503) return `Search index unavailable: ${detail}`;
+  if (res.status === 422) return `Invalid input: ${detail}`;
+  return `Error ${res.status}: ${detail}`;
+}
+
+function badge(label, value, cls) {
+  return value == null
+    ? `<span class="badge none" title="not in the ${label} pool">${label} –</span>`
+    : `<span class="badge ${cls}" title="rank in the ${label} list">${label} #${value}</span>`;
+}
+
+function renderResults(col, items) {
+  const el = $("r-" + col);
+  if (!items || items.length === 0) { el.className = "empty"; el.textContent = "No results."; return; }
+  el.className = "";
+  el.innerHTML = items.map((r) => {
+    const snippet = r.text.length > 300 ? r.text.slice(0, 300) + "…" : r.text;
+    return `<div class="result">
+      <div class="top"><span class="rank">#${r.rank}</span><span class="doc">${esc(r.doc_id)}</span>
+        ${badge("vec", r.vector_rank, "v")} ${badge("bm25", r.bm25_rank, "b")}
+        <span class="score">${Number(r.score).toFixed(4)}</span></div>
+      <div class="heading">${esc(r.heading)}</div>
+      <p class="snippet">${esc(snippet)}</p></div>`;
+  }).join("");
+}
+
+function renderTimings(t) {
+  const fmt = (k) => (t[k] != null ? `${k.replace("_ms", "")} ${t[k]} ms` : null);
+  const shared = [fmt("embed_ms"), fmt("vector_search_ms"), fmt("bm25_ms")].filter(Boolean).join(" · ");
+  $("t-vector").textContent = shared;
+  $("t-hybrid").textContent = [shared, fmt("fusion_ms")].filter(Boolean).join(" · ");
+  $("t-hybrid_rerank").textContent = [fmt("rerank_ms"), fmt("total_ms")].filter(Boolean).join(" · ");
+}
+
+async function runCompare(query) {
+  const btn = $("go");
+  btn.disabled = true;
+  clearMsg();
+  COLS.forEach((c) => { $("r-" + c).className = "empty"; $("r-" + c).textContent = "Searching…"; $("t-" + c).textContent = ""; });
+  try {
+    const res = await fetch("/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, top_k: Number($("k").value) }),
+    });
+    if (!res.ok) {
+      showMsg(await readError(res));
+      COLS.forEach((c) => { $("r-" + c).textContent = "—"; });
+      return;
+    }
+    const data = await res.json();
+    COLS.forEach((c) => renderResults(c, data[c]));
+    renderTimings(data.timings_ms || {});
+  } catch (e) {
+    showMsg("Network error: " + e.message + " (the Space may be waking up; retry in a few seconds).");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadEval() {
+  const body = $("eval-body");
+  try {
+    const res = await fetch("/eval/results");
+    if (!res.ok) { body.textContent = await readError(res); return; }
+    const data = await res.json();
+    const modes = data.modes || {};
+    const rows = Object.entries(modes).map(([mode, m]) => {
+      if (m.status !== "ok") return `<tr><td>${esc(mode)}</td><td colspan="4">${esc(m.status)}: ${esc(m.detail || "")}</td></tr>`;
+      const f = (x) => (x == null ? "–" : Number(x).toFixed(3));
+      return `<tr><td>${esc(mode)}</td><td>${f(m["hit@1"])}</td><td>${f(m["hit@3"])}</td><td>${f(m["hit@5"])}</td><td>${f(m["mrr@10"])}</td></tr>`;
+    }).join("");
+    body.className = "";
+    body.innerHTML = `<div class="empty">${esc(data.num_questions)} questions · doc-level labels · generated ${esc(data.generated_at || "")}</div>
+      <table><thead><tr><th>Mode</th><th>hit@1</th><th>hit@3</th><th>hit@5</th><th>MRR@10</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    body.textContent = "Could not load eval results: " + e.message;
+  }
+}
+
+$("chips").innerHTML = EXAMPLES.map((q) => `<button type="button" class="chip">${esc(q)}</button>`).join("");
+$("chips").addEventListener("click", (e) => {
+  if (e.target.classList.contains("chip")) { $("q").value = e.target.textContent; runCompare($("q").value); }
+});
+$("f").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("q").value.trim();
+  if (q) runCompare(q);
+});
+
+fetch("/health").then(async (res) => {
+  if (!res.ok) { showMsg(await readError(res)); return; }
+  const h = await res.json();
+  const missing = COLS.filter((c) => !(h.mode_available || []).includes(c));
+  if (missing.length) showMsg(`Modes not available yet: ${missing.join(", ")} (hand-written core still a stub).`, "info");
+}).catch(() => {});
+loadEval();
+</script>
+</body>
+</html>

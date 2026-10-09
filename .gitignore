@@ -1,0 +1,28 @@
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Secrets
+.env
+
+# IDE / editor folders
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Hugging Face / model caches
+.cache/
+hf_cache/
+.hf_cache/
+huggingface/
+
+# NOTE: index/, results/ and data/ are intentionally NOT ignored;
+# they are committed so the Docker image can serve them.

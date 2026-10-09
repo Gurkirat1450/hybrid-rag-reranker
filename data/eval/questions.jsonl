@@ -1,0 +1,20 @@
+{"id": "q01", "type": "keyword", "question": "What does check_same_thread=False do for the SQLite engine?", "gold_docs": ["sql-databases.md"]}
+{"id": "q02", "type": "keyword", "question": "How do I set convert_underscores to False on a Header parameter?", "gold_docs": ["header-params.md", "header-param-models.md"]}
+{"id": "q03", "type": "keyword", "question": "What does exclude_unset=True in model_dump do for a PATCH partial update?", "gold_docs": ["body-updates.md", "sql-databases.md"]}
+{"id": "q04", "type": "keyword", "question": "What is the default max_age of CORSMiddleware?", "gold_docs": ["cors.md"]}
+{"id": "q05", "type": "keyword", "question": "Does a bool query parameter accept short=yes or short=on as True?", "gold_docs": ["query-params.md"]}
+{"id": "q06", "type": "keyword", "question": "How is the Last-Event-ID header used with EventSourceResponse?", "gold_docs": ["server-sent-events.md"]}
+{"id": "q07", "type": "keyword", "question": "How do I use include_in_schema=False with Query?", "gold_docs": ["query-params-str-validations.md"]}
+{"id": "q08", "type": "paraphrase", "question": "How can I send an email to a user after the client has already received its reply, without making them wait?", "gold_docs": ["background-tasks.md"]}
+{"id": "q09", "type": "paraphrase", "question": "Why does my /users/me route get captured by the route that takes a user id variable?", "gold_docs": ["path-params.md"]}
+{"id": "q10", "type": "paraphrase", "question": "How do I make an endpoint reply with 201 Created instead of 200 after inserting a new record?", "gold_docs": ["response-status-code.md", "path-operation-configuration.md"]}
+{"id": "q11", "type": "paraphrase", "question": "How can I avoid leaking the plaintext password when returning the user I just created?", "gold_docs": ["response-model.md", "extra-models.md"]}
+{"id": "q12", "type": "paraphrase", "question": "When a client sends me an image, how do I get its original name and MIME type?", "gold_docs": ["request-files.md"]}
+{"id": "q13", "type": "paraphrase", "question": "How can I measure how long every request takes and attach that duration as a custom header on each reply?", "gold_docs": ["middleware.md"]}
+{"id": "q14", "type": "paraphrase", "question": "How do I stop at breakpoints in VS Code or PyCharm while my API server is running?", "gold_docs": ["debugging.md"]}
+{"id": "q15", "type": "multi-concept", "question": "How do I declare path, query and request body parameters in the same endpoint, and how does FastAPI tell which is which?", "gold_docs": ["body.md", "body-multiple-params.md"]}
+{"id": "q16", "type": "multi-concept", "question": "Can one endpoint accept uploaded files together with form fields, and can it also accept a JSON body at the same time?", "gold_docs": ["request-forms-and-files.md", "request-files.md"]}
+{"id": "q17", "type": "multi-concept", "question": "How do I require a path parameter to be greater than or equal to 1 and a query string to have a minimum length of 3?", "gold_docs": ["path-params-numeric-validations.md", "query-params-str-validations.md"]}
+{"id": "q18", "type": "multi-concept", "question": "How do I convert a Pydantic model with datetime fields into a JSON-compatible dict before storing it during a PUT update?", "gold_docs": ["encoder.md", "body-updates.md"]}
+{"id": "q19", "type": "multi-concept", "question": "How can I reject unexpected extra query parameters or cookies sent by a client using a Pydantic model?", "gold_docs": ["query-param-models.md", "cookie-param-models.md"]}
+{"id": "q20", "type": "multi-concept", "question": "How do I stream items with yield, and what is the difference between JSON Lines and Server-Sent Events?", "gold_docs": ["stream-json-lines.md", "server-sent-events.md"]}
