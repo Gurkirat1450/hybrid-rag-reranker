@@ -44,12 +44,18 @@ class Settings:
     rate_limit_per_min: int
     index_dir: Path
     trust_proxy: bool
+    # fastembed / ONNX runtime. Defaulted so existing Settings(...) calls keep working.
+    model_cache_dir: Path = PROJECT_ROOT / ".fastembed_cache"
+    onnx_threads: int = 1
+    embed_batch_size: int = 16
+    rerank_batch_size: int = 8
 
 
 def load_settings() -> Settings:
     return Settings(
         embed_model=os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5"),
-        rerank_model=os.getenv("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
+        # fastembed's ONNX export of cross-encoder/ms-marco-MiniLM-L-6-v2.
+        rerank_model=os.getenv("RERANK_MODEL", RERANK_MODEL),
         vector_pool=_int("VECTOR_POOL", 30),
         bm25_pool=_int("BM25_POOL", 30),
         rerank_pool=_int("RERANK_POOL", 20),
@@ -59,8 +65,21 @@ def load_settings() -> Settings:
         rate_limit_per_min=_int("RATE_LIMIT_PER_MIN", 20),
         index_dir=_path("INDEX_DIR", "index"),
         trust_proxy=_bool("TRUST_PROXY", False),
+        # Same variable fastembed itself reads; passed explicitly as cache_dir everywhere
+        # (prefetch, build_index, runtime) so all three always use the same directory.
+        model_cache_dir=_path("FASTEMBED_CACHE_PATH", ".fastembed_cache"),
+        onnx_threads=_int("ONNX_THREADS", 1),
+        embed_batch_size=_int("EMBED_BATCH_SIZE", 16),
+        rerank_batch_size=_int("RERANK_BATCH_SIZE", 8),
     )
 
+
+# Exact fastembed model id of the re-ranker (default for RERANK_MODEL).
+RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"
+
+# Written to meta.json by build_index.py and checked at startup: an index embedded by
+# another runtime (e.g. the old sentence-transformers build) must be rebuilt.
+EMBED_BACKEND = "fastembed"
 
 settings = load_settings()
 

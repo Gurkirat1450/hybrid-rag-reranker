@@ -23,8 +23,9 @@ from typing import Any, Callable, TypeVar
 import numpy as np
 
 from app.chunking import Chunk, embedding_text
-from app.config import QUERY_PREFIX, Settings, settings as default_settings
+from app.config import EMBED_BACKEND, Settings, settings as default_settings
 from app.fusion import reciprocal_rank_fusion
+from app.onnx_models import embed_query, embedding_dim, load_cross_encoder, load_embedder
 from app.rerank import rerank
 from app.types import Candidate
 
@@ -76,6 +77,12 @@ def load_index_files(index_dir: Path, expected_model: str) -> tuple[dict, list[C
         )
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta.get("backend") != EMBED_BACKEND:
+        raise IndexUnavailableError(
+            f"Index was built with embedding backend '{meta.get('backend', 'sentence-transformers (no backend field)')}' "
+            f"but this app embeds queries with '{EMBED_BACKEND}', so vector scores would not be comparable. "
+            "Rebuild the index with `python scripts/build_index.py`."
+        )
     if meta.get("embed_model") != expected_model:
         raise IndexUnavailableError(
             f"Index was built with embed model '{meta.get('embed_model')}' but EMBED_MODEL is "
@@ -102,7 +109,6 @@ class Retriever:
     def __init__(self, cfg: Settings = default_settings) -> None:
         import faiss
         from rank_bm25 import BM25Okapi
-        from sentence_transformers import CrossEncoder, SentenceTransformer
 
         self.cfg = cfg
         self.meta, self.chunks = load_index_files(cfg.index_dir, cfg.embed_model)
@@ -116,26 +122,23 @@ class Retriever:
 
         self.bm25 = BM25Okapi([tokenize(embedding_text(c)) for c in self.chunks])
 
-        logger.info("Loading embed model %s", cfg.embed_model)
-        self.embedder = SentenceTransformer(cfg.embed_model, device="cpu")
-        dim = self.embedder.get_sentence_embedding_dimension()
+        # Each model is loaded once here (the app builds one Retriever at startup). The
+        # corpus vectors live only inside self.index; no second numpy copy is kept.
+        logger.info("Loading embed model %s (fastembed, %d ONNX thread(s))", cfg.embed_model, cfg.onnx_threads)
+        self.embedder = load_embedder(cfg)
+        dim = embedding_dim(self.embedder)
         if dim != self.index.d:
             raise IndexUnavailableError(
                 f"Embed model '{cfg.embed_model}' produces {dim}-d vectors but the index is {self.index.d}-d."
             )
-        logger.info("Loading re-rank model %s", cfg.rerank_model)
-        self.cross_encoder = CrossEncoder(cfg.rerank_model, device="cpu", max_length=512)
+        logger.info("Loading re-rank model %s (fastembed)", cfg.rerank_model)
+        self.cross_encoder = load_cross_encoder(cfg)
 
     # ------------------------------------------------------------------ stages
 
     def _vector(self, query: str, n: int, timings: dict[str, float]) -> list[tuple[int, float]]:
         t = time.perf_counter()
-        q = self.embedder.encode(
-            [QUERY_PREFIX + query],
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-            show_progress_bar=False,
-        ).astype(np.float32)
+        q = embed_query(self.embedder, query)  # adds the bge query prefix exactly once
         timings["embed_ms"] = _ms(t)
 
         t = time.perf_counter()
@@ -188,10 +191,29 @@ class Retriever:
         return out
 
     def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """predict_fn adapter for rerank(): (query, passage) pairs -> one plain float per
+        pair, in input order.
+
+        rerank() builds every pair from a single query, so this calls fastembed's
+        TextCrossEncoder.rerank(query, passages), which yields scores in the same order
+        as the passages. Scores are the model's raw logits (no sigmoid), the same scale
+        sentence-transformers produced for this model (its config sets an Identity
+        activation).
+        """
         if not pairs:
             return []
-        scores = self.cross_encoder.predict(pairs, convert_to_numpy=True, show_progress_bar=False)
-        return [float(s) for s in np.atleast_1d(scores)]
+        query = pairs[0][0]
+        if any(q != query for q, _ in pairs):
+            raise ValueError("_predict expects every pair to share one query (as rerank() builds them).")
+        scores = [
+            float(s)
+            for s in self.cross_encoder.rerank(
+                query, [passage for _, passage in pairs], batch_size=self.cfg.rerank_batch_size
+            )
+        ]
+        if len(scores) != len(pairs):
+            raise RuntimeError(f"Cross-encoder returned {len(scores)} scores for {len(pairs)} pairs.")
+        return scores
 
     def _rerank(self, query: str, pool: list[Candidate], top_k: int, timings: dict[str, float]) -> list[Candidate]:
         t = time.perf_counter()

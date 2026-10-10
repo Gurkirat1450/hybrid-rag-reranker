@@ -10,3 +10,4 @@ __pycache__
 .idea
 data/corpus
 tests
+.fastembed_cache

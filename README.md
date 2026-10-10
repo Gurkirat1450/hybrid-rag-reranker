@@ -12,6 +12,8 @@ pinned: false
 
 Hybrid retrieval over the FastAPI docs: BM25 + dense vectors fused with Reciprocal Rank Fusion, then re-ranked by a cross-encoder, with a side-by-side UI and a measured evaluation. Retrieval only, no LLM and no API keys.
 
+Both models run on the ONNX runtime through [fastembed](https://github.com/qdrant/fastembed), with no torch dependency, so the image stays small enough for free CPU hosting.
+
 **Live demo:** https://huggingface.co/spaces/<your-username>/<space-name>
 
 ![screenshot](docs/screenshot.png) *(placeholder: add a screenshot after deploying)*
@@ -26,14 +28,15 @@ Hybrid retrieval over the FastAPI docs: BM25 + dense vectors fused with Reciproc
     └──────────► │ bge-small-en-v1.5 + FAISS IP │── top VECTOR_POOL (30) ─► Reciprocal Rank Fusion (k=60)
                  └──────────────────────────────┘                        │
                                                                          ▼  top RERANK_POOL (20)
-                                                     cross-encoder/ms-marco-MiniLM-L-6-v2
+                                                  ms-marco-MiniLM-L-6-v2 (ONNX, fastembed)
                                                                          │
                                                                          ▼
                                                                   top_k results
 ```
 
 - **Chunking** (`app/chunking.py`): the docs are split on `##`/`###` headings, and each chunk's heading reads "Doc title > section". mkdocs include and admonition lines are removed. Long sections (over about 1800 chars) are split at paragraph breaks with about 200 chars of overlap. Short sections (under about 200 chars) are merged into the previous chunk.
-- **Vector**: queries get the bge instruction prefix and passages don't. Embeddings are normalized, so FAISS `IndexFlatIP` scores are cosine similarities.
+- **Models** (`app/onnx_models.py`): fastembed `TextEmbedding` (`BAAI/bge-small-en-v1.5`, 384-d) and `TextCrossEncoder` (`Xenova/ms-marco-MiniLM-L-6-v2`), each loaded once at startup with a small ONNX thread count (`ONNX_THREADS`, default 1) and small batches (`EMBED_BATCH_SIZE`, `RERANK_BATCH_SIZE`).
+- **Vector**: queries get the bge instruction prefix and passages don't. fastembed doesn't add the prefix itself, so the app adds it once. Embeddings are normalized, so FAISS `IndexFlatIP` scores are cosine similarities.
 - **BM25**: rebuilt at startup from `index/chunks.jsonl`. Tokens are lowercase `[a-z0-9_]+` (this keeps `check_same_thread` and `exclude_unset` intact). Nothing is pickled.
 - **RRF** (`app/fusion.py`), **re-rank** (`app/rerank.py`) and **metrics** (`app/metrics.py`) are written by hand. Until they're implemented the API returns `501` for the modes that need them, while `vector` and `bm25` keep working.
 
@@ -43,14 +46,16 @@ API: `GET /health`, `POST /search` (`mode` = `vector | bm25 | hybrid | hybrid_re
 
 20 hand-written questions over 40 FastAPI tutorial docs, scored at doc level (7 keyword, 7 paraphrase, 6 multi-concept).
 
-| Mode | hit@1 | hit@3 | hit@5 | MRR@10 | Mean latency |
-|---|---|---|---|---|---|
-| vector | 0.800 | 0.950 | 1.000 | 0.879 | 33 ms |
-| bm25 | 0.950 | 1.000 | 1.000 | 0.967 | 1.6 ms |
-| hybrid (RRF) | 0.950 | 1.000 | 1.000 | 0.975 | 33 ms |
-| hybrid + re-rank | 0.950 | 1.000 | 1.000 | 0.975 | 2,441 ms |
+| Mode | hit@1 | hit@3 | hit@5 | MRR@10 |  (20 questions, doc-level)
+|---|---|---|---|---|
+| vector | 0.800 | 0.950 | 1.000 | 0.879 |
+| bm25 | 0.950 | 1.000 | 1.000 | 0.967 |
+| hybrid | 0.950 | 1.000 | 1.000 | 0.975 |
+| hybrid_rerank | 0.950 | 1.000 | 1.000 | 0.975 |
 
 Latency is the mean per query on a local CPU run and will be higher on the free Hugging Face CPU tier.
+
+Results were produced with the fastembed ONNX runtime (not sentence-transformers/torch). fastembed's bge-small is an optimized ONNX export of the same model, so scores can differ slightly from a torch run.
 
 ### How to read this
 
@@ -77,15 +82,16 @@ Requires Python 3.10 or 3.11.
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt        # pulls torch via sentence-transformers
+pip install -r requirements.txt        # fastembed + onnxruntime, no torch
 
 pytest                                 # fusion/rerank/metrics tests fail until you implement them
+python scripts/prefetch_models.py      # optional: downloads both ONNX models into .fastembed_cache/
 python scripts/build_index.py          # writes index/ (prints chunk and doc counts)
 uvicorn app.main:app --reload --port 8000   # open http://127.0.0.1:8000
 python scripts/run_eval.py             # writes results/eval_results.json and prints the table
 ```
 
-Configuration comes from environment variables (see `.env.example`): pool sizes, `RRF_K`, `RATE_LIMIT_PER_MIN`, `INDEX_DIR`, `TRUST_PROXY`. If you change `EMBED_MODEL`, rebuild the index. The app won't serve an index built with a different model (it returns 503).
+Configuration comes from environment variables (see `.env.example`): pool sizes, `RRF_K`, `RATE_LIMIT_PER_MIN`, `INDEX_DIR`, `TRUST_PROXY`, `FASTEMBED_CACHE_PATH`, `ONNX_THREADS` and the batch sizes. If you change `EMBED_MODEL`, rebuild the index. The app won't serve an index built with a different model or by a different embedding runtime (it returns 503). An index built before the fastembed switch has no `"backend": "fastembed"` in `meta.json`, so rebuild it once.
 
 ## Deploy to Hugging Face Spaces
 
@@ -109,7 +115,7 @@ Then:
    # username: your HF username, password: the write token
    ```
    If the Space was created with an initial commit, run `git pull space main --allow-unrelated-histories` first, or use `git push --force space main`.
-4. Watch the **Logs** tab. The build installs CPU torch, then the requirements, then downloads both models into the image.
+4. Watch the **Logs** tab. The build installs the requirements (fastembed and onnxruntime, no torch), then downloads both ONNX models into the image.
 
 `index/faiss.index` is a small binary file (chunk count × 384 float32, well under 1 MB). The Hugging Face Hub can reject plain-git binary files on push. If that happens, track it with Git LFS before committing: `git lfs install && git lfs track "index/faiss.index" "*.png"`, then commit `.gitattributes`.
 
@@ -133,4 +139,4 @@ Then:
 
 `data/corpus/` contains the top-level tutorial pages of the [FastAPI documentation](https://github.com/fastapi/fastapi/tree/master/docs/en/docs/tutorial), copyright © Sebastián Ramírez, licensed under the [MIT License](https://github.com/fastapi/fastapi/blob/master/LICENSE). The files were copied flat, with no subfolders. This project isn't affiliated with FastAPI.
 
-Models: [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (MIT) and [cross-encoder/ms-marco-MiniLM-L-6-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2) (Apache-2.0).
+Models: [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (MIT) and [cross-encoder/ms-marco-MiniLM-L-6-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2) (Apache-2.0), run as the ONNX exports fastembed downloads ([Qdrant/bge-small-en-v1.5-onnx-Q](https://huggingface.co/Qdrant/bge-small-en-v1.5-onnx-Q) and [Xenova/ms-marco-MiniLM-L-6-v2](https://huggingface.co/Xenova/ms-marco-MiniLM-L-6-v2)).

@@ -1,4 +1,4 @@
-# Hugging Face Space (Docker SDK, free CPU).
+# Docker image for the app (free CPU hosting). ONNX runtime via fastembed, no torch.
 # The index is NOT built here: run scripts/build_index.py locally and commit index/ first.
 FROM python:3.11-slim
 
@@ -7,30 +7,33 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# HF Spaces run the container as uid 1000.
+# Run as uid 1000 (required on HF Spaces, harmless elsewhere).
 RUN useradd -m -u 1000 user
 USER user
 
+# FASTEMBED_CACHE_PATH is read by app/config.py and passed to fastembed as cache_dir by
+# prefetch, build_index and the app alike. It's under the user's home, so the RUN below
+# creates it owned by (and writable for) uid 1000.
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH \
     HF_HOME=/home/user/.cache/huggingface \
+    FASTEMBED_CACHE_PATH=/home/user/.cache/fastembed \
+    ONNX_THREADS=1 \
     TRUST_PROXY=1
 
 WORKDIR /home/user/app
 
-# 1) CPU-only torch first, so sentence-transformers does not pull the CUDA build.
-RUN pip install --user torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
-
-# 2) Everything else (requirements.txt does not list torch).
+# 1) Dependencies (fastembed brings onnxruntime; no torch).
 COPY --chown=user requirements.txt .
 RUN pip install --user -r requirements.txt
 
-# 3) Bake both models into the image (only config is needed, so code edits keep this layer cached).
-COPY --chown=user app/__init__.py app/config.py app/
+# 2) Bake both models into the image (only config + the model loader are needed, so
+#    other code edits keep this layer cached).
+COPY --chown=user app/__init__.py app/config.py app/onnx_models.py app/
 COPY --chown=user scripts/prefetch_models.py scripts/
 RUN python scripts/prefetch_models.py
 
-# 4) App code plus the committed index/ and results/.
+# 3) App code plus the committed index/ and results/.
 COPY --chown=user . .
 
 EXPOSE 7860

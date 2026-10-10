@@ -23,6 +23,7 @@ __pycache__/
 hf_cache/
 .hf_cache/
 huggingface/
+.fastembed_cache/
 
 # NOTE: index/, results/ and data/ are intentionally NOT ignored;
 # they are committed so the Docker image can serve them.
