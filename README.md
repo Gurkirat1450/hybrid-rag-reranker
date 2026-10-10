@@ -16,6 +16,7 @@ Both models run on the ONNX runtime through [fastembed](https://github.com/qdran
 
 **Live demo:** https://huggingface.co/spaces/<your-username>/<space-name>
 
+> **Live demo note:** the free tier has 512 MB RAM, which is not enough to run the cross-encoder alongside the other models, so the hosted demo shows Vector and Hybrid only. Hybrid + Re-rank is fully implemented, tested and measured in the eval table above; run it locally with `ENABLE_RERANK=1` (the default).
 ![screenshot](docs/screenshot.png) *(placeholder: add a screenshot after deploying)*
 
 ## Architecture
