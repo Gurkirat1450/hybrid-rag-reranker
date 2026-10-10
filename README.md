@@ -10,9 +10,9 @@ pinned: false
 
 # hybrid-rag-reranker
 
-Hybrid search over the FastAPI tutorial docs. It combines BM25 and dense vectors with reciprocal rank fusion, then re-ranks the results with a cross-encoder, and it shows all three stages side by side. It only does retrieval: there's no LLM and no API keys.
+Hybrid retrieval over the FastAPI docs: BM25 + dense vectors fused with Reciprocal Rank Fusion, then re-ranked by a cross-encoder, with a side-by-side UI and a measured evaluation. Retrieval only, no LLM and no API keys.
 
-**Live demo:** `https://huggingface.co/spaces/<your-user>/<your-space>` *(placeholder)*
+**Live demo:** https://huggingface.co/spaces/<your-username>/<space-name>
 
 ![screenshot](docs/screenshot.png) *(placeholder: add a screenshot after deploying)*
 
@@ -41,18 +41,34 @@ API: `GET /health`, `POST /search` (`mode` = `vector | bm25 | hybrid | hybrid_re
 
 ## Results
 
-Paste the table that `python scripts/run_eval.py` prints:
+20 hand-written questions over 40 FastAPI tutorial docs, scored at doc level (7 keyword, 7 paraphrase, 6 multi-concept).
 
-| Mode | hit@1 | hit@3 | hit@5 | MRR@10 |
-|---|---|---|---|---|
-| vector | – | – | – | – |
-| bm25 | – | – | – | – |
-| hybrid | – | – | – | – |
-| hybrid_rerank | – | – | – | – |
+| Mode | hit@1 | hit@3 | hit@5 | MRR@10 | Mean latency |
+|---|---|---|---|---|---|
+| vector | 0.800 | 0.950 | 1.000 | 0.879 | 33 ms |
+| bm25 | 0.950 | 1.000 | 1.000 | 0.967 | 1.6 ms |
+| hybrid (RRF) | 0.950 | 1.000 | 1.000 | 0.975 | 33 ms |
+| hybrid + re-rank | 0.950 | 1.000 | 1.000 | 0.975 | 2,441 ms |
 
-**How to read it:** hit@k is the share of questions where at least one correct document shows up among the first k *distinct* documents returned. MRR@10 averages 1/rank of the first correct document, so higher is better and 1.0 means the correct doc always came first.
+Latency is the mean per query on a local CPU run and will be higher on the free Hugging Face CPU tier.
 
-**Honest limits:** labels are doc-level, so a hit means the right page was found, not necessarily the exact paragraph. There are only 20 hand-written questions over a 40-file corpus, so one question moves a metric by 0.05, and small differences between modes are noise. The questions were written by reading the same docs, which can favour keyword overlap even though a third of them are deliberately paraphrased.
+### How to read this
+
+BM25 is a strong baseline here: the FastAPI docs are full of exact identifiers, and even the paraphrased questions share vocabulary with the answer text. Hybrid matches it (MRR 0.975 vs 0.967). Re-ranking produced no net gain while making queries roughly 75x slower than hybrid.
+
+Re-ranking did change individual results:
+- **Helped:** q15 ("How do I declare path, query and request body parameters in the same endpoint, and how does FastAPI tell which is which?") moved the correct doc from rank 2 to rank 1. The cross-encoder reads the whole long question against each chunk, which is what multi-concept queries need.
+- **Hurt:** q11 ("How can I avoid leaking the plaintext password when returning the user I just created?") moved the correct doc from rank 1 to rank 2, because another doc was a closer topical match to the wording.
+
+These two cancel out in the aggregate.
+
+## Honest limits
+
+- **Small eval:** 20 questions, 6-7 per type. One question moves a within-type metric by 0.14-0.17, so these results are indicative, not statistically significant.
+- **Doc-level labels:** a hit means the right *document* was in the top k, not that the right *passage* was. Several docs can partly answer a question, so a "miss" is sometimes a labeling limit.
+- **Paraphrase set is mild:** the questions avoid the headings' wording but still share vocabulary with the answers, which favours BM25. A harder paraphrase set would likely favour dense retrieval.
+- **Small, technical corpus:** 40 docs (305 chunks) of identifier-heavy text. Fusion and re-ranking are expected to matter more on larger, more varied corpora, which this eval does not test.
+- **Retrieval only:** the app returns ranked passages. It does not generate answers.
 
 ## Run locally
 
