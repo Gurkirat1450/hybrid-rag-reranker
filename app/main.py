@@ -16,7 +16,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import PROJECT_ROOT, settings
 from app.ratelimit import SlidingWindowRateLimiter, resolve_client_ip
-from app.retrieval import HandWrittenNotImplementedError, IndexUnavailableError, Retriever
+from app.retrieval import (
+    RERANK_DISABLED_DETAIL,
+    HandWrittenNotImplementedError,
+    IndexUnavailableError,
+    RerankDisabledError,
+    Retriever,
+)
 from app.types import Candidate
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -99,8 +105,10 @@ class CompareResponse(BaseModel):
     query: str
     vector: list[ResultItem]
     hybrid: list[ResultItem]
-    hybrid_rerank: list[ResultItem]
+    # None when re-ranking is disabled (ENABLE_RERANK=0); `notes` then says why.
+    hybrid_rerank: list[ResultItem] | None
     timings_ms: dict[str, float]
+    notes: str | None = None
 
 
 def _items(candidates: list[Candidate]) -> list[ResultItem]:
@@ -178,6 +186,11 @@ async def _index_handler(request: Request, exc: IndexUnavailableError) -> JSONRe
     return _error(503, "index_unavailable", str(exc))
 
 
+@app.exception_handler(RerankDisabledError)
+async def _rerank_disabled_handler(request: Request, exc: RerankDisabledError) -> JSONResponse:
+    return _error(400, "mode_unavailable", RERANK_DISABLED_DETAIL)
+
+
 @app.exception_handler(HandWrittenNotImplementedError)
 async def _not_implemented_handler(request: Request, exc: HandWrittenNotImplementedError) -> JSONResponse:
     return _error(501, "not_implemented", f"{exc} Implement it in {exc.filename} and restart the server.")
@@ -200,7 +213,12 @@ async def index() -> FileResponse:
 @app.get("/health")
 async def health(request: Request):
     r = _retriever(request)
-    return {"status": "ok", "chunks": len(r.chunks), "mode_available": r.available_modes()}
+    return {
+        "status": "ok",
+        "chunks": len(r.chunks),
+        "mode_available": r.available_modes(),
+        "rerank_enabled": r.rerank_enabled,
+    }
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -216,12 +234,14 @@ def compare(body: CompareRequest, request: Request) -> CompareResponse:
     _charge(request, COMPARE_COST)
     r = _retriever(request)
     columns, timings = r.compare(body.query, body.top_k)
+    reranked = columns["hybrid_rerank"]
     return CompareResponse(
         query=body.query,
         vector=_items(columns["vector"]),
         hybrid=_items(columns["hybrid"]),
-        hybrid_rerank=_items(columns["hybrid_rerank"]),
+        hybrid_rerank=None if reranked is None else _items(reranked),
         timings_ms=timings,
+        notes=RERANK_DISABLED_DETAIL if reranked is None else None,
     )
 
 

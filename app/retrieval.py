@@ -49,6 +49,19 @@ class HandWrittenNotImplementedError(RuntimeError):
         super().__init__(f"{filename} is not implemented yet (it still raises NotImplementedError).")
 
 
+RERANK_DISABLED_DETAIL = (
+    "Re-ranking is disabled on this deployment (free-tier memory limit). "
+    "See the eval results for its measured effect."
+)
+
+
+class RerankDisabledError(RuntimeError):
+    """hybrid_rerank was requested but ENABLE_RERANK=0, so no cross-encoder is loaded (HTTP 400)."""
+
+    def __init__(self) -> None:
+        super().__init__(RERANK_DISABLED_DETAIL)
+
+
 def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
@@ -131,8 +144,16 @@ class Retriever:
             raise IndexUnavailableError(
                 f"Embed model '{cfg.embed_model}' produces {dim}-d vectors but the index is {self.index.d}-d."
             )
-        logger.info("Loading re-rank model %s (fastembed)", cfg.rerank_model)
-        self.cross_encoder = load_cross_encoder(cfg)
+        self.cross_encoder = None
+        if cfg.enable_rerank:
+            logger.info("Loading re-rank model %s (fastembed)", cfg.rerank_model)
+            self.cross_encoder = load_cross_encoder(cfg)
+        else:
+            logger.info("ENABLE_RERANK=0: re-rank model not loaded; hybrid_rerank is unavailable")
+
+    @property
+    def rerank_enabled(self) -> bool:
+        return self.cross_encoder is not None
 
     # ------------------------------------------------------------------ stages
 
@@ -230,6 +251,8 @@ class Retriever:
             raise ValueError(f"Unknown mode {mode!r}; expected one of {MODES}")
         if top_k < 1:
             raise ValueError("top_k must be >= 1")
+        if mode == "hybrid_rerank" and not self.rerank_enabled:
+            raise RerankDisabledError()
 
         timings: dict[str, float] = {}
         start = time.perf_counter()
@@ -251,8 +274,9 @@ class Retriever:
         timings["total_ms"] = _ms(start)
         return results, timings
 
-    def compare(self, query: str, top_k: int) -> tuple[dict[str, list[Candidate]], dict[str, float]]:
-        """vector / hybrid / hybrid_rerank for one query, sharing the retrieval pools."""
+    def compare(self, query: str, top_k: int) -> tuple[dict[str, list[Candidate] | None], dict[str, float]]:
+        """vector / hybrid / hybrid_rerank for one query, sharing the retrieval pools.
+        "hybrid_rerank" is None when re-ranking is disabled (ENABLE_RERANK=0)."""
         timings: dict[str, float] = {}
         start = time.perf_counter()
         vec = self._vector(query, max(self.cfg.vector_pool, top_k), timings)
@@ -262,7 +286,11 @@ class Retriever:
             self._candidate(cid, s, r, brank.get(cid)) for r, (cid, s) in enumerate(vec[:top_k], start=1)
         ]
         fused = self._fuse(vec, bm, timings)
-        reranked = self._rerank(query, fused[: max(self.cfg.rerank_pool, top_k)], top_k, timings)
+        reranked = (
+            self._rerank(query, fused[: max(self.cfg.rerank_pool, top_k)], top_k, timings)
+            if self.rerank_enabled
+            else None
+        )
         timings["total_ms"] = _ms(start)
         return {"vector": vector_results, "hybrid": fused[:top_k], "hybrid_rerank": reranked}, timings
 
@@ -276,6 +304,8 @@ class Retriever:
         except Exception:  # implemented but buggy: let real requests surface the error
             pass
         modes.append("hybrid")
+        if not self.rerank_enabled:
+            return modes
         try:
             probe = Candidate(chunk_id=0, doc_id="", heading="", text="", score=0.0, vector_rank=None, bm25_rank=None)
             rerank("probe", [probe], predict_fn=lambda pairs: [0.0] * len(pairs), top_n=1)

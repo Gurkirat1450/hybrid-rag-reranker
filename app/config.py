@@ -49,6 +49,9 @@ class Settings:
     onnx_threads: int = 1
     embed_batch_size: int = 16
     rerank_batch_size: int = 8
+    # ENABLE_RERANK=0 skips loading the cross-encoder (saves its memory on small hosts);
+    # the hybrid_rerank mode then reports itself as unavailable.
+    enable_rerank: bool = True
 
 
 def load_settings() -> Settings:
@@ -71,6 +74,7 @@ def load_settings() -> Settings:
         onnx_threads=_int("ONNX_THREADS", 1),
         embed_batch_size=_int("EMBED_BATCH_SIZE", 16),
         rerank_batch_size=_int("RERANK_BATCH_SIZE", 8),
+        enable_rerank=_bool("ENABLE_RERANK", True),
     )
 
 

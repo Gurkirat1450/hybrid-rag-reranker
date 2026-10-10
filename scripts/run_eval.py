@@ -23,7 +23,13 @@ sys.path.insert(0, str(ROOT))
 
 from app.config import settings  # noqa: E402
 from app.metrics import hit_at_k, reciprocal_rank  # noqa: E402
-from app.retrieval import MODES, HandWrittenNotImplementedError, IndexUnavailableError, Retriever  # noqa: E402
+from app.retrieval import (  # noqa: E402
+    MODES,
+    HandWrittenNotImplementedError,
+    IndexUnavailableError,
+    RerankDisabledError,
+    Retriever,
+)
 
 QUESTIONS = ROOT / "data" / "eval" / "questions.jsonl"
 OUT = ROOT / "results" / "eval_results.json"
@@ -96,6 +102,13 @@ def main() -> int:
         except HandWrittenNotImplementedError as exc:
             print(f"[skip] mode '{mode}': {exc}")
             modes_out[mode] = {"status": "not_implemented", "detail": str(exc)}
+            for pq in per_question:
+                pq["modes"].pop(mode, None)
+            continue
+        except RerankDisabledError as exc:
+            # ENABLE_RERANK=0: run the eval with re-ranking enabled to measure this mode.
+            print(f"[skip] mode '{mode}': {exc}")
+            modes_out[mode] = {"status": "disabled", "detail": str(exc)}
             for pq in per_question:
                 pq["modes"].pop(mode, None)
             continue

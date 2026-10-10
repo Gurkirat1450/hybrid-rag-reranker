@@ -71,7 +71,7 @@
   <div class="cols">
     <section class="col"><h2>Vector</h2><div class="timing" id="t-vector"></div><div id="r-vector" class="empty">No query yet.</div></section>
     <section class="col"><h2>Hybrid (RRF)</h2><div class="timing" id="t-hybrid"></div><div id="r-hybrid" class="empty">No query yet.</div></section>
-    <section class="col"><h2>Hybrid + Re-rank</h2><div class="timing" id="t-hybrid_rerank"></div><div id="r-hybrid_rerank" class="empty">No query yet.</div></section>
+    <section class="col"><h2 id="h-hybrid_rerank">Hybrid + Re-rank</h2><div class="timing" id="t-hybrid_rerank"></div><div id="r-hybrid_rerank" class="empty">No query yet.</div></section>
   </div>
 
   <details id="eval">
@@ -92,6 +92,20 @@ const EXAMPLES = [
 ];
 const COLS = ["vector", "hybrid", "hybrid_rerank"];
 const $ = (id) => document.getElementById(id);
+
+// Set when the server runs with ENABLE_RERANK=0 (from /health or a null hybrid_rerank in /compare).
+const RERANK_DISABLED_NOTE = "Re-ranking is disabled on this deployment (free-tier memory limit). See the eval results for its measured effect.";
+let rerankDisabled = false;
+const activeCols = () => (rerankDisabled ? COLS.filter((c) => c !== "hybrid_rerank") : COLS);
+
+function setRerankDisabled(note) {
+  rerankDisabled = true;
+  $("h-hybrid_rerank").textContent = "Hybrid + Re-rank — disabled on this deployment (512 MB limit)";
+  $("t-hybrid_rerank").textContent = "";
+  const el = $("r-hybrid_rerank");
+  el.className = "empty";
+  el.textContent = note || RERANK_DISABLED_NOTE;
+}
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -144,14 +158,16 @@ function renderTimings(t) {
   const shared = [fmt("embed_ms"), fmt("vector_search_ms"), fmt("bm25_ms")].filter(Boolean).join(" · ");
   $("t-vector").textContent = shared;
   $("t-hybrid").textContent = [shared, fmt("fusion_ms")].filter(Boolean).join(" · ");
-  $("t-hybrid_rerank").textContent = [fmt("rerank_ms"), fmt("total_ms")].filter(Boolean).join(" · ");
+  if (!rerankDisabled) {
+    $("t-hybrid_rerank").textContent = [fmt("rerank_ms"), fmt("total_ms")].filter(Boolean).join(" · ");
+  }
 }
 
 async function runCompare(query) {
   const btn = $("go");
   btn.disabled = true;
   clearMsg();
-  COLS.forEach((c) => { $("r-" + c).className = "empty"; $("r-" + c).textContent = "Searching…"; $("t-" + c).textContent = ""; });
+  activeCols().forEach((c) => { $("r-" + c).className = "empty"; $("r-" + c).textContent = "Searching…"; $("t-" + c).textContent = ""; });
   try {
     const res = await fetch("/compare", {
       method: "POST",
@@ -160,11 +176,12 @@ async function runCompare(query) {
     });
     if (!res.ok) {
       showMsg(await readError(res));
-      COLS.forEach((c) => { $("r-" + c).textContent = "—"; });
+      activeCols().forEach((c) => { $("r-" + c).textContent = "—"; });
       return;
     }
     const data = await res.json();
-    COLS.forEach((c) => renderResults(c, data[c]));
+    if (data.hybrid_rerank === null) setRerankDisabled(data.notes);
+    activeCols().forEach((c) => renderResults(c, data[c]));
     renderTimings(data.timings_ms || {});
   } catch (e) {
     showMsg("Network error: " + e.message + " (the Space may be waking up; retry in a few seconds).");
@@ -206,7 +223,9 @@ $("f").addEventListener("submit", (e) => {
 fetch("/health").then(async (res) => {
   if (!res.ok) { showMsg(await readError(res)); return; }
   const h = await res.json();
-  const missing = COLS.filter((c) => !(h.mode_available || []).includes(c));
+  if (h.rerank_enabled === false) setRerankDisabled();
+  // A disabled mode isn't "missing" (that message is about stub hand-written modules).
+  const missing = activeCols().filter((c) => !(h.mode_available || []).includes(c));
   if (missing.length) showMsg(`Modes not available yet: ${missing.join(", ")} (hand-written core still a stub).`, "info");
 }).catch(() => {});
 loadEval();
